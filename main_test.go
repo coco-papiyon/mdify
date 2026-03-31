@@ -42,3 +42,27 @@ func TestParseTableNewline(t *testing.T) {
 		t.Fatalf("unexpected parse results: %#v", table)
 	}
 }
+
+func TestProcessHtml(t *testing.T) {
+	htmlInput := `Version:0.9
+StartHTML:00000097
+EndHTML:00000195
+StartFragment:00000131
+EndFragment:00000159
+<html>
+<body>
+<!--StartFragment-->
+<table border="1">
+  <tr><th>a</th><th>b</th></tr>
+  <tr><td>1</td><td>2</td></tr>
+  <tr><td>3</td><td>4</td></tr>
+</table>
+<!--EndFragment-->
+</body>
+</html>`
+	md := processHtml(htmlInput)
+	expected := "| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n"
+	if md != expected {
+		t.Fatalf("unexpected markdown:\nexpected:\n%s\nactual:\n%s", expected, md)
+	}
+}
