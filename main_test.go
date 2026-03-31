@@ -1,6 +1,8 @@
 package main
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestParseTableAndMarkdown(t *testing.T) {
 	raw := "a\tb\tc\n1\t2\t3\n4\t5\t6"
@@ -23,6 +25,20 @@ func TestParseTableSpaceSeparated(t *testing.T) {
 		t.Fatalf("expected 2 rows, got %d", len(table))
 	}
 	if table[0][0] != "x" || table[1][2] != "9" {
+		t.Fatalf("unexpected parse results: %#v", table)
+	}
+}
+
+func TestParseTableNewline(t *testing.T) {
+	raw := "x y\n\"7\n8\" 9"
+	table := parseTable(raw)
+	//for _, row := range table {
+	//	fmt.Println(strings.Join(row, ", "))
+	//}
+	if len(table) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(table))
+	}
+	if table[0][0] != "x" || table[1][0] != "7<br />8" {
 		t.Fatalf("unexpected parse results: %#v", table)
 	}
 }

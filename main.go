@@ -100,7 +100,61 @@ func fetchInput(path string) (string, error) {
 	return text, nil
 }
 
+func convertNewlinesInQuotes(raw string) string {
+	raw = strings.ReplaceAll(raw, "\r\n", "\n")
+	var b strings.Builder
+	inQuote := false
+	for i, r := range raw {
+		if r == '"' {
+			inQuote = !inQuote
+			b.WriteRune(r)
+			continue
+		}
+		if r == '\n' && inQuote {
+			b.WriteString("<br />")
+			continue
+		}
+		b.WriteRune(r)
+		_ = i
+	}
+	return b.String()
+}
+
+func splitRow(line string) []string {
+	if strings.Contains(line, "\t") {
+		cells := strings.Split(line, "\t")
+		for i := range cells {
+			cells[i] = strings.TrimSpace(cells[i])
+		}
+		return cells
+	}
+
+	var cells []string
+	var b strings.Builder
+	inQuote := false
+	for _, r := range line {
+		switch r {
+		case '"':
+			inQuote = !inQuote
+		case ' ', '\t':
+			if inQuote {
+				b.WriteRune(r)
+			} else if b.Len() > 0 {
+				cells = append(cells, b.String())
+				b.Reset()
+			}
+		default:
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() > 0 {
+		cells = append(cells, b.String())
+	}
+	return cells
+}
+
 func parseTable(raw string) [][]string {
+	raw = convertNewlinesInQuotes(raw)
 	raw = strings.ReplaceAll(raw, "\r\n", "\n")
 	lines := strings.Split(raw, "\n")
 	var table [][]string
@@ -109,11 +163,7 @@ func parseTable(raw string) [][]string {
 		if line == "" {
 			continue
 		}
-		cells := strings.Split(line, "\t")
-		if len(cells) == 1 {
-			// 非タブ区切りの場合はスペースで分割
-			cells = strings.Fields(line)
-		}
+		cells := splitRow(line)
 		for i := range cells {
 			cells[i] = sanitizeMarkdownCell(cells[i])
 		}
@@ -130,6 +180,7 @@ func sanitizeMarkdownCell(cell string) string {
 }
 
 func processText(input string) string {
+	input = convertNewlinesInQuotes(input)
 	lines := strings.Split(strings.ReplaceAll(input, "\r\n", "\n"), "\n")
 	var output strings.Builder
 	i := 0
