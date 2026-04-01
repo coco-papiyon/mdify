@@ -25,7 +25,7 @@ jobs:
       run: go mod download
 
     - name: Build binary for Windows
-      run: GOOS=windows GOARCH=amd64 go build -o mdify.exe .
+      run: GOOS=windows GOARCH=amd64 go build -ldflags="-H windowsgui" -o mdify.exe .
 
     - name: Create ZIP package
       run: zip mdify.zip mdify.exe install.bat uninstall.bat
