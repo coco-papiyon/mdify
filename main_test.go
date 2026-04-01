@@ -44,7 +44,7 @@ func TestParseTableNewline(t *testing.T) {
 }
 
 func TestProcessHtml(t *testing.T) {
-	htmlInput := `Version:0.9
+	input := `Version:0.9
 StartHTML:00000097
 EndHTML:00000195
 StartFragment:00000131
@@ -60,8 +60,31 @@ EndFragment:00000159
 <!--EndFragment-->
 </body>
 </html>`
-	md := processHtml(htmlInput)
+	md := processHtml(input)
 	expected := "| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n"
+	if md != expected {
+		t.Fatalf("unexpected markdown:\nexpected:\n%s\nactual:\n%s", expected, md)
+	}
+}
+
+func TestProcessRtf(t *testing.T) {
+	input := `{\rtf\ansi
+\trowd\trgaph30\trleft-30\trrh1013\cellx1598\cellx3196\pard\plain\intbl
+\qj a\cell\qj b\cell\row
+\trowd\trgaph30\trleft-30\trrh1013\cellx1598\cellx3196\pard\plain\intbl
+\qj 1\cell\qj 2\cell\row
+}`
+	md := processRtf(input)
+	expected := "| a | b |\n| --- | --- |\n| 1 | 2 |\n"
+	if md != expected {
+		t.Fatalf("unexpected markdown:\nexpected:\n%s\nactual:\n%s", expected, md)
+	}
+}
+
+func TestFromFile(t *testing.T) {
+	input := "test.txt"
+	md := mdify(input)
+	expected := "| a | b |\n| --- | --- |\n| 1 | 2 |\n"
 	if md != expected {
 		t.Fatalf("unexpected markdown:\nexpected:\n%s\nactual:\n%s", expected, md)
 	}

@@ -2,11 +2,11 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -29,25 +29,30 @@ var (
 	procCloseClipboard             = user32.NewProc("CloseClipboard")
 	procGetClipboardData           = user32.NewProc("GetClipboardData")
 	procIsClipboardFormatAvailable = user32.NewProc("IsClipboardFormatAvailable")
+	procRegisterClipboardFmt       = user32.NewProc("RegisterClipboardFormatW")
 )
 
 // CF_HTML / CF_RTF 定義
 const (
-	CF_UNICODETEXT = 13
-	CF_HTML        = 49362  // 通常登録されるHTML形式
-	CF_RTF         = 0xC0A0 // LibreOfficeなどで登録されるRTF形式
+	CF_UNICODETEXT uint = 13
+	CF_HTML        uint = 49362 // HTML形式
+	CF_RTF         uint = 49303 // LibreOfficeなどで登録されるRTF形式
 )
 
 var CF_LIST = []uint{CF_UNICODETEXT, CF_HTML, CF_RTF}
 
-var DEBUG = true
+var DEBUG = false
 
 func main() {
-	// Change current working directory to the directory containing the executable.
-	if exePath, err := os.Executable(); err != nil {
+	exePath, err := os.Executable()
+	if err != nil {
 		fatalError("error getting executable path: %v", err)
-	} else if exeDir := filepath.Dir(exePath); exeDir != "" {
-		if err := os.Chdir(exeDir); err != nil {
+	}
+
+	exeDir := filepath.Dir(exePath)
+	if exeDir != "" {
+		err := os.Chdir(exeDir)
+		if err != nil {
 			fatalError("error changing directory to executable dir %s: %v", exeDir, err)
 		}
 	}
@@ -63,57 +68,50 @@ func main() {
 
 	log.Printf("mdify started at %s", time.Now().Format("2006-01-02 15:04:05"))
 
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options]\n", os.Args[0])
-		flag.PrintDefaults()
+	inputPath := ""
+	if len(os.Args) > 1 {
+		inputPath = os.Args[1]
+	}
+	md := mdify(inputPath)
+
+	err = clipboard.WriteAll(md)
+	if err != nil {
+		fatalError("error writing to clipboard: %v", err)
 	}
 
-	inputPath := flag.String("input", "", "input file path (optional; clipboard used if omitted)")
-	outputPath := flag.String("output", "", "output file path (optional; clipboard used if omitted)")
-	dryRun := flag.Bool("dry-run", false, "print markdown to stdout without modifying clipboard/file")
-	flag.Parse()
+	fmt.Println("successfully wrote markdown to clipboard")
+	log.Printf("successfully wrote markdown to clipboard")
+}
 
-	inputText, format, err := fetchInput(*inputPath)
+func mdify(inputPath string) string {
+	inputText, format, err := fetchInput(inputPath)
 	if err != nil {
 		fatalError("error fetching input: %v", err)
 	}
 
 	if DEBUG {
 		log.Printf("Input (%d): %s", format, inputText)
+		if inputPath != "" {
+			fmt.Printf("# Input Path: %s\n", inputPath)
+		}
+		fmt.Printf("# Input Text(%d) \n%s\n--------\n", format, inputText)
 	}
 
 	var md string
 	if format == CF_UNICODETEXT {
 		md = processText(inputText)
-	} else {
+	} else if format == CF_HTML {
 		md = processHtml(inputText)
+	} else if format == CF_RTF {
+		md = processRtf(inputText)
 	}
 
 	if DEBUG {
 		log.Printf("Output: %s", md)
+		fmt.Printf("# Generated Markdown  \n%s\n--------\n", md)
 	}
 
-	if *dryRun {
-		fmt.Println(md)
-		log.Printf("dry-run completed, output to stdout")
-		return
-	}
-
-	if *outputPath != "" {
-		if err := os.WriteFile(*outputPath, []byte(md), 0644); err != nil {
-			fatalError("error writing output file %s: %v", *outputPath, err)
-		}
-		fmt.Fprintf(os.Stdout, "wrote markdown to %s\n", *outputPath)
-		log.Printf("successfully wrote markdown to file: %s", *outputPath)
-	} else {
-		if err := clipboard.WriteAll(md); err != nil {
-			fatalError("error writing to clipboard: %v", err)
-		}
-		fmt.Fprintln(os.Stdout, "clipboard updated with markdown table")
-		log.Printf("successfully wrote markdown to clipboard")
-	}
-
-	log.Printf("mdify completed successfully")
+	return md
 }
 
 func fetchInput(path string) (string, uint, error) {
@@ -123,7 +121,7 @@ func fetchInput(path string) (string, uint, error) {
 			log.Printf("error reading input file %s: %v", path, err)
 			return "", 0, err
 		}
-		return string(b), 0, nil
+		return string(b), CF_UNICODETEXT, nil
 	}
 	var text string
 	var err error
@@ -133,6 +131,7 @@ func fetchInput(path string) (string, uint, error) {
 			if strings.TrimSpace(text) == "" {
 				return "", format, errors.New("clipboard is empty")
 			}
+			return text, format, nil
 		}
 	}
 	log.Printf("error reading clipboard data: %v", err)
@@ -282,6 +281,152 @@ func processHtml(input string) string {
 		return ""
 	}
 	return toMarkdown(table)
+}
+
+func processRtf(input string) string {
+	plain := rtfToPlainText(input)
+	return processText(plain)
+}
+
+func rtfToPlainText(rtf string) string {
+	var b strings.Builder
+	ignoreDepth := 0
+	for i := 0; i < len(rtf); {
+		switch rtf[i] {
+		case '{':
+			if ignoreDepth > 0 {
+				ignoreDepth++
+			}
+			i++
+		case '}':
+			if ignoreDepth > 0 {
+				ignoreDepth--
+			}
+			i++
+		case '\\':
+			i++
+			if i >= len(rtf) {
+				break
+			}
+			c := rtf[i]
+			if c == '\\' || c == '{' || c == '}' {
+				if ignoreDepth == 0 {
+					b.WriteByte(c)
+				}
+				i++
+				continue
+			}
+			if c == '*' {
+				ignoreDepth++
+				i++
+				continue
+			}
+
+			if c == '~' {
+				if ignoreDepth == 0 {
+					b.WriteByte(' ')
+				}
+				i++
+				continue
+			}
+			if c == '-' {
+				if ignoreDepth == 0 {
+					b.WriteByte('-')
+				}
+				i++
+				continue
+			}
+			if c == '_' {
+				if ignoreDepth == 0 {
+					b.WriteByte('-')
+				}
+				i++
+				continue
+			}
+			if c == '\'' {
+				i++
+				if i+1 <= len(rtf)-2 {
+					hex := rtf[i : i+2]
+					if v, err := strconv.ParseInt(hex, 16, 8); err == nil && ignoreDepth == 0 {
+						b.WriteByte(byte(v))
+					}
+					i += 2
+				}
+				continue
+			}
+
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+				start := i
+				for i < len(rtf) && ((rtf[i] >= 'a' && rtf[i] <= 'z') || (rtf[i] >= 'A' && rtf[i] <= 'Z')) {
+					i++
+				}
+				word := rtf[start:i]
+				arg := 0
+				hasArg := false
+				if i < len(rtf) && (rtf[i] == '-' || rtf[i] == '+' || (rtf[i] >= '0' && rtf[i] <= '9')) {
+					sign := 1
+					if rtf[i] == '-' {
+						sign = -1
+						i++
+					} else if rtf[i] == '+' {
+						i++
+					}
+					valStart := i
+					for i < len(rtf) && rtf[i] >= '0' && rtf[i] <= '9' {
+						i++
+					}
+					if valStart < i {
+						num, err := strconv.Atoi(rtf[valStart:i])
+						if err == nil {
+							arg = num * sign
+							hasArg = true
+						}
+					}
+				}
+				if i < len(rtf) && rtf[i] == ' ' {
+					i++
+				}
+
+				if ignoreDepth == 0 {
+					switch word {
+					case "par", "line", "row":
+						b.WriteByte('\n')
+					case "tab", "cell":
+						b.WriteByte('\t')
+					case "emdash":
+						b.WriteRune('—')
+					case "endash":
+						b.WriteRune('–')
+					case "u":
+						if hasArg {
+							u := arg
+							if u < 0 {
+								u += 65536
+							}
+							b.WriteRune(rune(u))
+							if i < len(rtf) && rtf[i] != '\\' && rtf[i] != '{' && rtf[i] != '}' {
+								i++
+							}
+						}
+					}
+				}
+				continue
+			}
+
+			// unknown sequence, skip this char
+			i++
+		default:
+			if ignoreDepth == 0 {
+				if rtf[i] == '\r' || rtf[i] == '\n' {
+					// ignore raw CR/LF from RTF structure
+				} else {
+					b.WriteByte(rtf[i])
+				}
+			}
+			i++
+		}
+	}
+	return b.String()
 }
 
 func extractTable(n *html.Node) [][]string {
